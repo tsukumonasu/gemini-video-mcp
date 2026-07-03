@@ -16,7 +16,7 @@ gcloud / google-auth には依存しない。トークンは MCP 自身が保存
 
 環境変数:
   GEMINI_VIDEO_CLIENT_ID     : OAuth クライアントID（必須）
-  GEMINI_VIDEO_CLIENT_SECRET=[REDACTED_PASSWORD]（必須）
+  GEMINI_VIDEO_CLIENT_SECRET     : クライアントシークレット（必須）
   GEMINI_VIDEO_REDIRECT_PORT : 初回認可のローカルポート（未指定なら空きポートを自動選択）
   GOOGLE_CLOUD_PROJECT / GEMINI_VIDEO_PROJECT_ID : 使用するGCPプロジェクトID（クォータ帰属）
   GEMINI_VIDEO_MODEL         : モデル。既定 gemini-omni-flash-preview
@@ -46,6 +46,7 @@ from .constants import (
     VALID_ASPECT_RATIOS,
     VALID_TASKS,
     SUPPORTED_MODELS,
+    CANDIDATE_MODELS,
     MODEL_ALIASES,
     MODEL_FORCED,
     resolve_model,
@@ -142,13 +143,18 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
         """利用可能な動画生成モデルの一覧と別名を返す。"""
         return {
             "models": SUPPORTED_MODELS,
+            "candidate_models": CANDIDATE_MODELS,
             "aliases": MODEL_ALIASES,
             "default": DEFAULT_MODEL,
+            "forced_by_env": MODEL_FORCED,
             "aspect_ratios": VALID_ASPECT_RATIOS,
             "tasks": VALID_TASKS,
             "note": (
-                "generate_video の model 引数、または環境変数 GEMINI_VIDEO_MODEL で指定できます。"
-                "別名（omni-flash など）も使えます。"
+                "モデルは環境変数 GEMINI_VIDEO_MODEL が最優先（設定時は generate_video の "
+                "model 引数を無視して常にこのモデルを使う）。未設定なら model 引数、無ければ既定 "
+                f"{DEFAULT_MODEL} を使う。別名（omni-flash など）も使えます。"
+                "candidate_models は将来の GA/上位版を見越した候補で、現時点では未提供の可能性が "
+                "ありますが GEMINI_VIDEO_MODEL に指定すればそのまま送信されます。"
                 "アスペクト比は 16:9（既定）/ 9:16。task は未指定ならプロンプトから推測されます。"
             ),
         }

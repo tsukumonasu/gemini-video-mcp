@@ -5,20 +5,9 @@
 **Gemini Omni Flash**（`gemini-omni-flash-preview`）を叩いて**動画を生成・編集**する
 **stdio な MCP サーバー**。`FastMCP` + stdio 構成、`uvx` 対応。
 
-> [gemini-image-mcp](https://github.com/tsukumonasu/gemini-image-mcp) の姉妹プロジェクトです。
-> 認証（MCP 内蔵のブラウザ OAuth フロー）とトークン運用は同じパターンで、
-> 同じ OAuth クライアントを流用できます。gcloud や google-auth には依存しません。
+> 認証は **MCP 内蔵のブラウザ OAuth フロー**です。gcloud や google-auth には依存しません。
 > 初回利用時にブラウザが開き、自分の Google アカウントでログイン → トークンを
-> MCP 自身が保存・自動更新します。
-
-## 画像版との違い
-
-| | gemini-image-mcp | gemini-video-mcp |
-|---|---|---|
-| API | Gemini Enterprise Agent Platform (`aiplatform.googleapis.com`) の `generateContent` | Gemini API (`generativelanguage.googleapis.com`) の `interactions` |
-| モデル | Nano Banana 2 Lite / 2 / Pro | Gemini Omni Flash (`gemini-omni-flash-preview`) |
-| 出力 | 画像 (base64) | 動画 MP4 (base64) |
-| 認証 | ブラウザ OAuth | ブラウザ OAuth（同じ） |
+> MCP 自身が `~/.gemini_video_mcp_token.json` に保存・自動更新します。
 
 ## 仕組み
 
@@ -38,32 +27,76 @@ https://generativelanguage.googleapis.com/v1beta/interactions
    動画 (base64 MP4) ──▶ ファイル保存
 ```
 
-## 前提（セットアップ）
+## セットアップ
 
-基本は gemini-image-mcp と同じです（同じ OAuth クライアントを流用可）。
+Google Cloud Console（https://console.cloud.google.com/）で以下を行います。
 
-1. **OAuth 同意画面**を設定（初回のみ）。「外部」の場合は自分をテストユーザーに追加。
-2. **OAuth クライアントID（デスクトップアプリ型）**を作成し、Client ID / Secret を控える。
-   - デスクトップアプリ型だけが `http://127.0.0.1:ポート/...` へのループバックリダイレクトを標準で許可します。
-3. 対象プロジェクトで **Generative Language API**（`generativelanguage.googleapis.com`）を有効化。
-   - `API とサービス` → `ライブラリ` で「Generative Language API」を検索して有効化。
-4. 環境変数を設定（下表）。
-5. 初回 `generate_video`（または `reauthorize`）でブラウザが開きログイン → トークン保存。
+### 1. OAuth 同意画面の設定（初回のみ）
 
-### 環境変数
+1. 画面上部のプロジェクト選択で対象プロジェクトを選ぶ。
+2. 「**API とサービス**」→「**OAuth 同意画面**」。
+3. User Type を選択：
+   - Google Workspace 組織内なら「**内部**」（テストユーザー登録が不要）
+   - 個人 Gmail 等なら「**外部**」
+4. アプリ名・ユーザーサポートメール・デベロッパー連絡先を入力。
+5. スコープはここでは追加不要（そのまま進む）。
+6. 「**外部**」を選んだ場合は「**テストユーザー**」に自分の Google アカウントを追加
+   （これが無いとログイン時に「アクセスをブロック」されます）。
+
+### 2. OAuth クライアントID を作成（デスクトップアプリ型）
+
+1. 「**API とサービス**」→「**認証情報**」。
+2. 上部「**+ 認証情報を作成**」→「**OAuth クライアント ID**」。
+3. アプリケーションの種類：「**デスクトップアプリ**」を選択（← 重要）。
+4. 名前（例: `gemini-video-mcp-desktop`）を入力して「作成」。
+5. 表示される **クライアントID** と **クライアントシークレット** を控える。
+
+> **なぜ「デスクトップアプリ」型か**: この種類だけが `http://127.0.0.1:ポート/...` への
+> ループバックリダイレクトを標準で許可します。本 MCP は初回認可時に空きポートを自動選択して
+> コールバックを受けるため、デスクトップアプリ型が必須です。
+
+### 3. Generative Language API を有効化
+
+1. 「**API とサービス**」→「**ライブラリ**」。
+2. 「**Generative Language API**」（＝ `generativelanguage.googleapis.com`）を検索して有効化。
+   - これが Gemini Omni Flash（動画生成）を叩く API です。
+
+### 4. 環境変数を設定
 
 | 変数 | 説明 |
 |------|------|
-| `GEMINI_VIDEO_CLIENT_ID` | OAuth クライアントID（必須） |
-| `GEMINI_VIDEO_CLIENT_SECRET` | クライアントシークレット（必須） |
+| `GEMINI_VIDEO_CLIENT_ID` | 手順2で作成した OAuth クライアントID（必須） |
+| `GEMINI_VIDEO_CLIENT_SECRET` | 手順2のクライアントシークレット（必須） |
 | `GOOGLE_CLOUD_PROJECT` または `GEMINI_VIDEO_PROJECT_ID` | 使用するプロジェクトID（クォータ帰属。必須） |
-| `GEMINI_VIDEO_MODEL` | モデル。既定 `gemini-omni-flash-preview`（別名 `omni-flash`） |
+| `GEMINI_VIDEO_MODEL` | 既定モデルの指定。**設定するとこのモデルが最優先**され、`generate_video` / `edit_video` の `model` 引数を渡しても無視してこの値を使う。未設定なら `model` 引数、無ければ `gemini-omni-flash-preview`。別名 `omni-flash` 等も可 |
 | `GEMINI_VIDEO_ASPECT_RATIO` | 既定アスペクト比。既定 `16:9`（他に `9:16`） |
 | `GEMINI_VIDEO_OUT_DIR` | `out_path` 省略時の出力先。既定 `~/gemini-videos` |
 | `GEMINI_VIDEO_TIMEOUT` | API タイムアウト秒。既定 `600`（動画は時間がかかるため長め） |
 | `GEMINI_VIDEO_REDIRECT_PORT` | 任意。初回認可のローカルポート（未指定なら空きポートを自動選択） |
 
-> トークンは `~/.gemini_video_mcp_token.json` に保存されます（画像版とは別ファイル）。
+### モデルの指定と優先順位
+
+使用モデルは次の優先順で決まります。
+
+1. **環境変数 `GEMINI_VIDEO_MODEL`（最優先）** — 設定されている場合、`generate_video` /
+   `edit_video` の `model` 引数を**無視して常にこの値**を使います（`list_models()` の
+   `forced_by_env: true` で確認可）。引数で別モデルを渡した場合は戻り値の `note` で通知します。
+2. `generate_video` / `edit_video` の `model` 引数（環境変数が未設定のときのみ有効）。
+3. どちらも無ければ既定の `gemini-omni-flash-preview`。
+
+別名（エイリアス）も使えます: `omni-flash` / `gemini-omni-flash` / `omni-flash-preview` /
+`omni-flash-latest` → いずれも `gemini-omni-flash-preview` に解決されます。
+
+将来の GA / 上位版を見越した**候補モデル**（`gemini-omni-flash`, `gemini-omni-flash-001`,
+`gemini-omni-pro-preview`, `gemini-omni-pro` など）も、`GEMINI_VIDEO_MODEL` に指定すれば
+そのまま API に送信されます（現時点では未提供の可能性があります）。候補一覧は
+`list_models()` の `candidate_models` で確認できます。
+
+### 5. 初回認証
+
+登録後に `generate_video`（または `reauthorize`）を実行すると **ブラウザが自動で開き**、
+Google ログイン画面が表示されます。自分のアカウントでログイン・許可すると、トークンが
+`~/.gemini_video_mcp_token.json` に保存され、以降は refresh token で自動更新されます。
 
 ## ツール
 
@@ -104,14 +137,78 @@ cd /Users/tatsuya.naiki/PycharmProjects/gemini-video-mcp
 uvx --from . gemini-video-mcp
 ```
 
+## JSON での登録例
+
+MCP クライアント（Amazon Quick / Claude Desktop 等）の設定ファイルに、以下のように
+`mcpServers` エントリを追加します。`env` の値は自分の OAuth クライアント・プロジェクトに置き換えてください。
+
+### ローカルのソースから起動する場合
+
+```json
+{
+  "mcpServers": {
+    "gemini-video": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "/Users/tatsuya.naiki/PycharmProjects/gemini-video-mcp",
+        "gemini-video-mcp"
+      ],
+      "env": {
+        "GEMINI_VIDEO_CLIENT_ID": "xxxxxxxx.apps.googleusercontent.com",
+        "GEMINI_VIDEO_CLIENT_SECRET": "GOCSPX-xxxxxxxx",
+        "GOOGLE_CLOUD_PROJECT": "your-gcp-project-id",
+        "GEMINI_VIDEO_MODEL": "gemini-omni-flash-preview",
+        "GEMINI_VIDEO_ASPECT_RATIO": "16:9",
+        "GEMINI_VIDEO_OUT_DIR": "/Users/tatsuya.naiki/PycharmProjects/gemini-videos"
+      }
+    }
+  }
+}
+```
+
+### GitHub から直接起動する場合
+
+```json
+{
+  "mcpServers": {
+    "gemini-video": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/tsukumonasu/gemini-video-mcp",
+        "gemini-video-mcp"
+      ],
+      "env": {
+        "GEMINI_VIDEO_CLIENT_ID": "xxxxxxxx.apps.googleusercontent.com",
+        "GEMINI_VIDEO_CLIENT_SECRET": "GOCSPX-xxxxxxxx",
+        "GOOGLE_CLOUD_PROJECT": "your-gcp-project-id",
+        "GEMINI_VIDEO_MODEL": "gemini-omni-flash-preview"
+      }
+    }
+  }
+}
+```
+
+> **補足**
+> - `env` に必要なのは最低限 `GEMINI_VIDEO_CLIENT_ID` / `GEMINI_VIDEO_CLIENT_SECRET` /
+>   `GOOGLE_CLOUD_PROJECT`（または `GEMINI_VIDEO_PROJECT_ID`）の3つ。残りは任意（既定値あり）。
+> - `GEMINI_VIDEO_MODEL` を指定すると、そのモデルが**最優先**で使われます（`generate_video` /
+>   `edit_video` の `model` 引数より優先）。上の例では既定と同じ `gemini-omni-flash-preview` を
+>   明示していますが、別名 `omni-flash` や将来の候補モデルも指定できます。固定したくなければ省略可（既定が使われます）。
+> - `GEMINI_VIDEO_OUT_DIR` は Amazon Quick の許可フォルダ内（例 `/Users/tatsuya.naiki/PycharmProjects/...`）に
+>   すると、生成した動画をそのままプレビューできます。既定の `~/gemini-videos` は許可フォルダ外のため非推奨。
+> - シークレットを設定ファイルに直書きしたくない場合は、シェルの環境変数として export しておき
+>   `env` から該当キーを省くこともできます（クライアントが親プロセスの環境変数を引き継ぐ場合）。
+
 ## つまずきポイント
 
 | 症状 | 原因・対処 |
 |------|-----------|
-| ログイン時「アクセスをブロック」 | OAuth同意画面が「外部」でテストユーザー未登録 → 自分を追加 |
-| `redirect_uri_mismatch` | クライアントが「デスクトップアプリ」型でない → 作り直す |
+| ログイン時「アクセスをブロック」 | OAuth同意画面が「外部」でテストユーザー未登録 → セットアップ手順1-6で自分を追加 |
+| `redirect_uri_mismatch` | クライアントが「デスクトップアプリ」型でない → セットアップ手順2で作り直す |
 | `403 PERMISSION_DENIED` | Generative Language API 未有効化 → セットアップ手順3を実施 |
-| `reauthorize` が `Address already in use` | 前回の OAuth ローカルサーバーがポートを占有。`lsof -ti :<port> \| xargs kill -9` → `rm ~/.gemini_video_mcp_token.json` → 手動起動で再ログイン |
+| `reauthorize` が `Address already in use` | 前回の OAuth ローカルサーバーがポートを占有。占有ポートを解放（`lsof -ti :<port> \| xargs kill -9`）→ `rm ~/.gemini_video_mcp_token.json` → 手動起動で再ログイン |
 
 ## 注記
 

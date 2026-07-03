@@ -33,9 +33,20 @@ MODEL_ALIASES = {
     # 分かりやすい別名 -> 実モデルID
     "omni-flash": "gemini-omni-flash-preview",
     "gemini-omni-flash": "gemini-omni-flash-preview",
+    "omni-flash-preview": "gemini-omni-flash-preview",
+    "omni-flash-latest": "gemini-omni-flash-preview",
 }
 SUPPORTED_MODELS = [
     "gemini-omni-flash-preview",  # Gemini Omni Flash（プレビュー / 動画生成・編集）
+]
+# 将来追加されうる候補モデルID（GA 版・上位版など）。現時点では未提供だが、
+# GEMINI_VIDEO_MODEL でこれらを指定してもエラーにせず素通しできるよう、
+# 既知候補として控えておく（resolve_model は SUPPORTED_MODELS に無い値も許容する）。
+CANDIDATE_MODELS = [
+    "gemini-omni-flash",        # GA 想定（preview サフィックスなし）
+    "gemini-omni-flash-001",    # 日付/版サフィックス付き想定
+    "gemini-omni-pro-preview",  # 上位版（プレビュー）想定
+    "gemini-omni-pro",          # 上位版 GA 想定
 ]
 # 環境変数 GEMINI_VIDEO_MODEL が設定されていれば、それを常に使う（呼び出し側の
 # model 引数より優先＝強制）。未設定なら既定（Gemini Omni Flash）を使う。

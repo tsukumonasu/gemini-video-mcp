@@ -34,11 +34,18 @@ GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Gemini API（generativelanguage）を OAuth で叩くのに必要なスコープ。
-# generative-language.retriever ではなく、汎用の cloud-platform を使う
-# （gemini-image-mcp と同じ。既存トークン運用と揃える）。
+# 出所（公式 OAuth クイックスタート）: https://ai.google.dev/gemini-api/docs/oauth
+#   gcloud auth application-default login --scopes=
+#     'https://www.googleapis.com/auth/cloud-platform,
+#      https://www.googleapis.com/auth/generative-language.retriever'
+# ・スコープは必須。無し/不足だと 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT になる。
+# ・cloud-platform は汎用（generateContent 等をカバー）。
+# ・generative-language.retriever はセマンティック検索など Gemini API 固有機能用。
+#   （※ "generative-language"（.retriever 無し）は無効なスコープで 400 invalid_scope）
+# interactions（動画生成）は cloud-platform で叩けるが、公式手順に合わせて両方要求しておく。
 SCOPES = [
     "https://www.googleapis.com/auth/cloud-platform",
-    "https://www.googleapis.com/auth/generative-language",
+    "https://www.googleapis.com/auth/generative-language.retriever",
 ]
 
 TOKEN_FILE = os.path.expanduser("~/.gemini_video_mcp_token.json")
