@@ -105,8 +105,8 @@ Google ログイン画面が表示されます。自分のアカウントでロ�
 | `auth_status()` | 認証・プロジェクト・モデルの準備状況を確認する |
 | `reauthorize()` | ブラウザで再ログインしてトークンを取り直す |
 | `list_models()` | 利用可能なモデル・別名・アスペクト比・task 一覧を返す |
-| `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, project_id?)` | テキスト/画像から動画を生成する |
-| `edit_video(prompt, previous_interaction_id, out_path?, ...)` | 前の生成結果を踏まえてステートフルに編集する |
+| `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, input_videos?, project_id?)` | テキスト/画像/動画から動画を生成する（`input_videos` 指定で動画→動画） |
+| `edit_video(prompt, previous_interaction_id?, input_videos?, out_path?, ...)` | 動画を編集する。前の生成結果（`previous_interaction_id`）または手持ち動画（`input_videos`）を編集 |
 
 ### 使い方の例
 
@@ -114,10 +114,24 @@ Google ログイン画面が表示されます。自分のアカウントでロ�
 - **縦動画**: `generate_video(prompt="A futuristic city with neon lights...", aspect_ratio="9:16")`
 - **画像から**: `generate_video(prompt="turn this into realistic footage, using the drawing only as a guide for movement", input_images=["/path/to/fish.jpg"], task="image_to_video")`
 - **被写体参照（複数画像）**: `generate_video(prompt="A cat playfully batting at a ball of yarn.", input_images=["/path/cat.png", "/path/yarn.png"])`
-- **ステートフル編集**: `generate_video(...)` の戻り値 `interaction_id` を `edit_video(prompt="空を夕焼けに", previous_interaction_id=<id>)` に渡す
+- **動画から動画（手持ち動画の編集）**: `generate_video(prompt="When the person touches the mirror, make the mirror ripple like liquid. Keep everything else the same.", input_videos=["/path/to/source.mp4"], task="edit")`
+  - あるいは `edit_video(prompt="この動画をアニメ調にして。他はそのまま", input_videos=["/path/to/source.mp4"])`
+- **ステートフル編集（モデル生成動画の継続編集）**: `generate_video(...)` の戻り値 `interaction_id` を `edit_video(prompt="空を夕焼けに", previous_interaction_id=<id>)` に渡す
 
 > **画像→動画のコツ**: 高解像度の画像を使い、カメラの動き・被写体の動き・環境効果など
 > 具体的な動きを指示すると良い結果になります。「動かして」のような曖昧な指示は避けてください。
+
+> **動画→動画（動画編集）のコツと制約**:
+> - `input_videos` に編集したい動画を1本渡します（`task="edit"` 推奨）。編集はシンプルなプロンプトが
+>   最も効果的です。特定の要素だけ変えたいときは「他はそのまま（Keep everything else the same）」を
+>   添えると一貫性を保てます（例: 「電話を見えなくして。他はそのまま」）。
+> - **複数動画の同時参照は非対応**です。1本のみ渡してください。
+> - **リージョン制約**: EEA（欧州経済領域）・スイス・英国では**アップロードした動画の編集は非対応**です
+>   （`previous_interaction_id` を使ったモデル生成動画の編集は可能）。
+> - 音声リファレンスの入力、動画の延長・フレーム間補間（最初と最後のフレームから中間を生成）、
+>   YouTube 動画の入力ソース利用は非対応です。
+> - 大きな動画は base64 でそのまま送信するためペイロード上限に達する可能性があります
+>   （公式では 4MB 超は Files API 経由が推奨。現状の本 MCP は base64 直接送信）。
 
 ### 出力先の注意（Amazon Quick）
 
