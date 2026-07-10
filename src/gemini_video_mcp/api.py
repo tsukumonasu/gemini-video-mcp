@@ -71,20 +71,42 @@ def image_to_input_part(image_path: str) -> dict[str, Any]:
     return {"type": "image", "data": base64.b64encode(raw).decode(), "mime_type": mime}
 
 
+def video_to_input_part(video_path: str) -> dict[str, Any]:
+    """入力動画を interactions の input パート（video）に変換する。
+
+    出所のスキーマ: {"type": "video", "data": "<base64>", "mime_type": "video/mp4"}
+    ※ 動画→動画（編集）用。大きな動画は base64 だとペイロード上限に達する可能性が
+      あるため、公式では Files API 経由が推奨されるが、本 MCP は httpx のみ依存で
+      シンプルに保つため base64 直接埋め込みで送る。
+    """
+    abs_path = os.path.abspath(os.path.expanduser(video_path))
+    if not os.path.exists(abs_path):
+        raise ValueError(f"入力動画が見つかりません: {abs_path}")
+    with open(abs_path, "rb") as f:
+        raw = f.read()
+    mime = mimetypes.guess_type(abs_path)[0] or "video/mp4"
+    return {"type": "video", "data": base64.b64encode(raw).decode(), "mime_type": mime}
+
+
 def build_input(
     prompt: str,
     input_images: Optional[list[str]] = None,
+    input_videos: Optional[list[str]] = None,
 ) -> Any:
     """interactions の input を構築する。
 
-    - 画像が無ければ文字列（テキストのみ）を返す。
-    - 画像があれば [image..., {"type":"text","text":prompt}] のパート配列を返す
-      （画像→動画・被写体参照。複数画像も可）。
+    - 画像・動画が無ければ文字列（テキストのみ）を返す。
+    - 画像/動画があれば [video..., image..., {"type":"text","text":prompt}] の
+      パート配列を返す。
+        * 画像 → 画像→動画・被写体参照（複数画像も可）
+        * 動画 → 動画→動画（編集）。※ 複数動画の同時参照は非対応のため通常は1本
     """
-    if not input_images:
+    if not input_images and not input_videos:
         return prompt
     parts: list[dict[str, Any]] = []
-    for path in input_images:
+    for path in input_videos or []:
+        parts.append(video_to_input_part(path))
+    for path in input_images or []:
         parts.append(image_to_input_part(path))
     parts.append({"type": "text", "text": prompt})
     return parts

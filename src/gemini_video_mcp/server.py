@@ -186,6 +186,7 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
         aspect_ratio: str = DEFAULT_ASPECT_RATIO,
         task: Optional[str] = None,
         input_images: Optional[list[str]] = None,
+        input_videos: Optional[list[str]] = None,
         project_id: Optional[str] = None,
     ) -> dict[str, Any]:
         """Gemini Omni Flash で動画を生成する。
@@ -204,6 +205,11 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
                   未指定ならモデルがプロンプト・入力からタスクを推測する。
             input_images: 参照画像のパス配列（任意）。1枚なら画像→動画、複数なら被写体参照など。
                           高解像度画像＋具体的な動きの指示を推奨。
+            input_videos: 入力動画のパス配列（任意）。動画→動画（編集）に使う。動画を渡すと
+                          その動画を素材に編集した動画を生成する（task は image_to_video ではなく
+                          未指定または edit を推奨）。※ 複数動画の同時参照は非対応のため通常は1本。
+                          ※ 大きな動画は base64 送信のためペイロード上限に注意。
+                          ※ EEA/スイス/UK ではアップロード動画の編集は非対応（モデル生成動画の編集は可）。
             project_id: プロジェクトID上書き（任意。クォータ帰属用）。
 
         Returns:
@@ -227,7 +233,9 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
         proj = ag_auth.resolve_project_id(explicit=project_id)
         access_token = await _get_token_or_raise()
 
-        input_value = ag_api.build_input(prompt, input_images=input_images)
+        input_value = ag_api.build_input(
+            prompt, input_images=input_images, input_videos=input_videos
+        )
 
         response = await ag_api.create_interaction(
             access_token,
@@ -260,26 +268,39 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
     @app.tool()
     async def edit_video(
         prompt: str,
-        previous_interaction_id: str,
+        previous_interaction_id: Optional[str] = None,
         out_path: Optional[str] = None,
         model: Optional[str] = None,
         aspect_ratio: Optional[str] = None,
         input_images: Optional[list[str]] = None,
+        input_videos: Optional[list[str]] = None,
         project_id: Optional[str] = None,
     ) -> dict[str, Any]:
-        """直前に生成した動画を、会話履歴を踏まえてステートフルに編集する。
+        """動画を編集する。編集対象は次の2通りのいずれかで指定する。
 
-        previous_interaction_id に generate_video / edit_video が返した interaction_id を渡すと、
-        前の動画を再アップロードせずに編集が適用されます。モデルは動画のコンテキストを記憶し、
-        言及していない要素を保持しながら変更を適用します（task は edit として送信）。
+        1. ステートフル編集（前の生成結果を継続編集）:
+           previous_interaction_id に generate_video / edit_video が返した interaction_id を渡すと、
+           前の動画を再アップロードせずに編集が適用されます。モデルは動画のコンテキストを記憶し、
+           言及していない要素を保持しながら変更を適用します。
+        2. 手持ち動画の編集（動画→動画）:
+           input_videos に手元の動画ファイルパスを渡すと、その動画を素材に編集した動画を生成します
+           （previous_interaction_id が無い場合はこちら）。
+
+        いずれの場合も task は edit として送信します。previous_interaction_id と input_videos の
+        少なくとも一方を指定してください。
 
         Args:
             prompt: 変更したい内容の説明（例: "空を夕焼けにして、カメラをゆっくり右へパン"）。
-            previous_interaction_id: 前回の生成/編集で返った interaction_id（必須）。
+                    編集はシンプルなプロンプトが有効。「他はそのまま」を添えると一貫性を保ちやすい。
+            previous_interaction_id: 前回の生成/編集で返った interaction_id（ステートフル編集時）。
             out_path: 出力先ファイルパス（.mp4）。省略時は GEMINI_VIDEO_OUT_DIR に自動命名で保存。
             model: 使用モデル（任意）。環境変数 GEMINI_VIDEO_MODEL 設定時は無視。
             aspect_ratio: アスペクト比（任意。16:9 / 9:16）。省略時は前の設定を引き継ぐ。
             input_images: 追加の参照画像パス配列（任意）。
+            input_videos: 編集対象の入力動画パス配列（任意。動画→動画）。previous_interaction_id を
+                          使わず手持ち動画を編集する場合に指定。※ 複数動画の同時参照は非対応（通常1本）。
+                          ※ 大きな動画は base64 送信のためペイロード上限に注意。
+                          ※ EEA/スイス/UK ではアップロード動画の編集は非対応（モデル生成動画の編集は可）。
             project_id: プロジェクトID上書き（任意）。
 
         Returns:
@@ -287,12 +308,19 @@ def create_server(settings: Settings, tokens: ag_auth.TokenManager) -> FastMCP:
         """
         if aspect_ratio is not None and aspect_ratio not in VALID_ASPECT_RATIOS:
             raise ValueError(f"無効なアスペクト比: {aspect_ratio}。有効値: {VALID_ASPECT_RATIOS}")
+        if not previous_interaction_id and not input_videos:
+            raise ValueError(
+                "編集対象がありません。previous_interaction_id（ステートフル編集）または "
+                "input_videos（手持ち動画の編集）の少なくとも一方を指定してください。"
+            )
 
         resolved_model = resolve_model(model)
         proj = ag_auth.resolve_project_id(explicit=project_id)
         access_token = await _get_token_or_raise()
 
-        input_value = ag_api.build_input(prompt, input_images=input_images)
+        input_value = ag_api.build_input(
+            prompt, input_images=input_images, input_videos=input_videos
+        )
 
         response = await ag_api.create_interaction(
             access_token,
