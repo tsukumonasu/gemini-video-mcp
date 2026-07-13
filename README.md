@@ -108,6 +108,78 @@ Google ログイン画面が表示されます。自分のアカウントでロ�
 | `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, input_videos?, project_id?)` | テキスト/画像/動画から動画を生成する（`input_videos` 指定で動画→動画） |
 | `edit_video(prompt, previous_interaction_id?, input_videos?, out_path?, ...)` | 動画を編集する。前の生成結果（`previous_interaction_id`）または手持ち動画（`input_videos`）を編集 |
 
+### スキル（ツール）の説明一覧
+
+MCP クライアント（Amazon Quick / Claude Desktop 等）に公開される 5 つのツール（スキル）と、その引数・戻り値の詳細です。
+
+#### `auth_status()`
+認証・プロジェクト・モデルの準備状況を確認する。
+
+- **引数**: なし
+- **戻り値**:
+  - `ready`: 動画生成の準備が整っているか
+  - `auth`: 認証状態（`valid` / `expired` / `needs_reauth`）
+  - `client_configured`: OAuth クライアント（ID/SECRET）が設定済みか
+  - `project_id`: 解決されたプロジェクトID
+  - `model`: 現在の既定モデル
+  - `available_models`: 選択可能なモデル一覧
+  - `message`: 状態の説明と次のアクション
+
+#### `reauthorize()`
+ブラウザで Google に再ログインしてトークンを取り直す。
+
+- ブラウザが自動で開き、Google のログイン画面が表示される。認可を完了すると新しいトークンが保存される。
+- 認証エラー（401 等）や Refresh Token 失効時に実行する。
+- **引数**: なし
+
+#### `list_models()`
+利用可能な動画生成モデルの一覧と別名を返す。
+
+- **引数**: なし
+- **戻り値**:
+  - `models`: サポート対象モデル一覧
+  - `candidate_models`: 将来の GA / 上位版を見越した候補モデル（現時点では未提供の可能性あり）
+  - `aliases`: モデルの別名（エイリアス）
+  - `default`: 既定モデル
+  - `forced_by_env`: 環境変数 `GEMINI_VIDEO_MODEL` によるモデル固定が有効か
+  - `aspect_ratios`: 有効なアスペクト比（`16:9` / `9:16`）
+  - `tasks`: 有効な task 種別
+  - `note`: モデル選択・優先順位の補足
+
+#### `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, input_videos?, project_id?)`
+Gemini Omni Flash で動画を生成する。テキストのみ（text_to_video）、参照画像あり（image_to_video / reference_to_video）、動画→動画（edit）に対応。音声付きの MP4 が生成される。
+
+- **引数**:
+  - `prompt`（必須）: 生成したい動画の説明。`input_images` 指定時はその画像をどう使うかの指示。
+  - `out_path`: 出力先ファイルパス（.mp4）。省略時は `GEMINI_VIDEO_OUT_DIR` に自動命名で保存。※ Amazon Quick でプレビューするには許可フォルダ内のパスを指定すること。
+  - `model`: 使用モデル。別名 `omni-flash` 可。環境変数 `GEMINI_VIDEO_MODEL` 設定時はこの引数は無視。
+  - `aspect_ratio`: アスペクト比。`16:9`（既定・横）または `9:16`（縦）。
+  - `task`: 動作の明示指定（任意）。`text_to_video` / `image_to_video` / `reference_to_video` / `edit`。未指定ならモデルがプロンプト・入力から推測。
+  - `input_images`: 参照画像のパス配列（任意）。1枚なら画像→動画、複数なら被写体参照など。高解像度画像＋具体的な動きの指示を推奨。
+  - `input_videos`: 入力動画のパス配列（任意）。動画→動画（編集）に使う。※ 複数動画の同時参照は非対応（通常1本）。
+  - `project_id`: プロジェクトID上書き（任意・クォータ帰属用）。
+- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `model` / `aspect_ratio` / `project_id`
+  - `interaction_id` は `edit_video` の `previous_interaction_id` に渡してステートフル編集できる。
+
+#### `edit_video(prompt, previous_interaction_id?, out_path?, model?, aspect_ratio?, input_images?, input_videos?, project_id?)`
+動画を編集する。編集対象は次の2通りのいずれかで指定する。
+
+1. **ステートフル編集**（前の生成結果を継続編集）: `previous_interaction_id` に `generate_video` / `edit_video` が返した `interaction_id` を渡すと、前の動画を再アップロードせずに編集が適用される。
+2. **手持ち動画の編集**（動画→動画）: `input_videos` に手元の動画ファイルパスを渡すと、その動画を素材に編集した動画を生成する。
+
+いずれの場合も task は `edit` として送信される。`previous_interaction_id` と `input_videos` の少なくとも一方を指定すること。
+
+- **引数**:
+  - `prompt`（必須）: 変更したい内容の説明。編集はシンプルなプロンプトが有効。「他はそのまま（Keep everything else the same）」を添えると一貫性を保ちやすい。
+  - `previous_interaction_id`: 前回の生成/編集で返った `interaction_id`（ステートフル編集時）。
+  - `out_path`: 出力先ファイルパス（.mp4）。省略時は `GEMINI_VIDEO_OUT_DIR` に自動命名で保存。
+  - `model`: 使用モデル（任意）。環境変数 `GEMINI_VIDEO_MODEL` 設定時は無視。
+  - `aspect_ratio`: アスペクト比（任意・`16:9` / `9:16`）。省略時は前の設定を引き継ぐ。
+  - `input_images`: 追加の参照画像パス配列（任意）。
+  - `input_videos`: 編集対象の入力動画パス配列（任意・動画→動画）。※ 複数動画の同時参照は非対応（通常1本）。
+  - `project_id`: プロジェクトID上書き（任意）。
+- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `previous_interaction_id` / `model` / `project_id`
+
 ### 使い方の例
 
 - **テキストから**: `generate_video(prompt="A marble rolling fast on a chain reaction style track, continuous smooth shot.")`
