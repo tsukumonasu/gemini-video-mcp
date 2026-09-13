@@ -1,14 +1,14 @@
 [project]
 name = "gemini-video-mcp"
-version = "0.1.0"
-description = "Video generation MCP server (stdio) — calls Gemini Omni Flash (gemini-omni-flash-preview) via the Gemini interactions API using browser OAuth"
+version = "0.2.0"
+description = "Video generation MCP server (stdio) — calls Gemini Omni 1.1 Flash (gemini-omni-1.1-flash) via the Gemini interactions API using browser OAuth"
 readme = "README.md"
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "tsukumonasu" }]
 keywords = ["mcp", "gemini", "omni", "video-generation", "oauth"]
 dependencies = [
-    "mcp>=1.9.0,<2",
+    "mcp>=2.0.0,<3",
     "httpx>=0.27.0",
 ]
 

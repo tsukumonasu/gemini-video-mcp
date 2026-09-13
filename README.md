@@ -2,8 +2,8 @@
 
 自分の **Google Cloud プロジェクト**の OAuth クライアントで**ブラウザログイン**し、
 **Gemini API**（`generativelanguage.googleapis.com`）の `interactions` エンドポイント経由で
-**Gemini Omni Flash**（`gemini-omni-flash-preview`）を叩いて**動画を生成・編集**する
-**stdio な MCP サーバー**。`FastMCP` + stdio 構成、`uvx` 対応。
+**Gemini Omni 1.1 Flash**（`gemini-omni-1.1-flash`）を叩いて**動画を生成・編集・延長**する
+**stdio な MCP サーバー**。MCP Python SDK **2.x**（`MCPServer`）+ stdio 構成、`uvx` 対応。Python 3.10 以上（3.14 含む）。
 
 > 認証は **MCP 内蔵のブラウザ OAuth フロー**です。gcloud や google-auth には依存しません。
 > 初回利用時にブラウザが開き、自分の Google アカウントでログイン → トークンを
@@ -21,7 +21,7 @@ gemini-video-mcp
         │  ③ POST /v1beta/interactions（Authorization: Bearer）
         ▼
 https://generativelanguage.googleapis.com/v1beta/interactions
-   model: gemini-omni-flash-preview
+   model: gemini-omni-1.1-flash
         │
         ▼
    動画 (base64 MP4) ──▶ ファイル保存
@@ -59,7 +59,7 @@ Google Cloud Console（https://console.cloud.google.com/）で以下を行いま
 
 1. 「**API とサービス**」→「**ライブラリ**」。
 2. 「**Generative Language API**」（＝ `generativelanguage.googleapis.com`）を検索して有効化。
-   - これが Gemini Omni Flash（動画生成）を叩く API です。
+   - これが Gemini Omni 1.1 Flash（動画生成）を叩く API です。
 
 ### 4. 環境変数を設定
 
@@ -68,8 +68,9 @@ Google Cloud Console（https://console.cloud.google.com/）で以下を行いま
 | `GEMINI_VIDEO_CLIENT_ID` | 手順2で作成した OAuth クライアントID（必須） |
 | `GEMINI_VIDEO_CLIENT_SECRET` | 手順2のクライアントシークレット（必須） |
 | `GOOGLE_CLOUD_PROJECT` または `GEMINI_VIDEO_PROJECT_ID` | 使用するプロジェクトID（クォータ帰属。必須） |
-| `GEMINI_VIDEO_MODEL` | 既定モデルの指定。**設定するとこのモデルが最優先**され、`generate_video` / `edit_video` の `model` 引数を渡しても無視してこの値を使う。未設定なら `model` 引数、無ければ `gemini-omni-flash-preview`。別名 `omni-flash` 等も可 |
+| `GEMINI_VIDEO_MODEL` | 既定モデルの指定。**設定するとこのモデルが最優先**され、`generate_video` / `edit_video` / `extend_video` の `model` 引数を渡しても無視してこの値を使う。未設定なら `model` 引数、無ければ `gemini-omni-1.1-flash`。別名 `omni-flash` 等も可 |
 | `GEMINI_VIDEO_ASPECT_RATIO` | 既定アスペクト比。既定 `16:9`（他に `9:16`） |
+| `GEMINI_VIDEO_RESOLUTION` | 既定解像度。既定 `720p`（他に `360p` / `1080p` / `4k`） |
 | `GEMINI_VIDEO_OUT_DIR` | `out_path` 省略時の出力先。既定 `~/gemini-videos` |
 | `GEMINI_VIDEO_TIMEOUT` | API タイムアウト秒。既定 `600`（動画は時間がかかるため長め） |
 | `GEMINI_VIDEO_REDIRECT_PORT` | 任意。初回認可のローカルポート（未指定なら空きポートを自動選択） |
@@ -79,18 +80,43 @@ Google Cloud Console（https://console.cloud.google.com/）で以下を行いま
 使用モデルは次の優先順で決まります。
 
 1. **環境変数 `GEMINI_VIDEO_MODEL`（最優先）** — 設定されている場合、`generate_video` /
-   `edit_video` の `model` 引数を**無視して常にこの値**を使います（`list_models()` の
+   `edit_video` / `extend_video` の `model` 引数を**無視して常にこの値**を使います（`list_models()` の
    `forced_by_env: true` で確認可）。引数で別モデルを渡した場合は戻り値の `note` で通知します。
-2. `generate_video` / `edit_video` の `model` 引数（環境変数が未設定のときのみ有効）。
-3. どちらも無ければ既定の `gemini-omni-flash-preview`。
+2. `generate_video` / `edit_video` / `extend_video` の `model` 引数（環境変数が未設定のときのみ有効）。
+3. どちらも無ければ既定の `gemini-omni-1.1-flash`。
 
-別名（エイリアス）も使えます: `omni-flash` / `gemini-omni-flash` / `omni-flash-preview` /
-`omni-flash-latest` → いずれも `gemini-omni-flash-preview` に解決されます。
+| モデルID | 説明 |
+|---------|------|
+| `gemini-omni-1.1-flash` | **既定**。Gemini Omni 1.1 Flash（プレビュー、2026-08-27 リリース）。動画生成・編集・延長・キーフレーム補間・参照動画・360p〜4k |
+| `gemini-omni-flash-preview` | 旧世代（Omni Flash 1.0 プレビュー）。提供終了の可能性あり |
 
-将来の GA / 上位版を見越した**候補モデル**（`gemini-omni-flash`, `gemini-omni-flash-001`,
-`gemini-omni-pro-preview`, `gemini-omni-pro` など）も、`GEMINI_VIDEO_MODEL` に指定すれば
-そのまま API に送信されます（現時点では未提供の可能性があります）。候補一覧は
+> Vertex（Gemini Enterprise Agent Platform）側のドキュメントでは同モデルが
+> `gemini-omni-1.1-flash-preview` と表記されていますが、本 MCP が叩く Gemini API
+> （`generativelanguage.googleapis.com`）でのモデルコードは `gemini-omni-1.1-flash` です。
+> `gemini-omni-1.1-flash-preview` を指定した場合も `gemini-omni-1.1-flash` に解決されます。
+
+別名（エイリアス）も使えます: `omni-flash` / `gemini-omni-flash` / `omni-flash-latest` /
+`omni-1.1-flash` / `gemini-omni-1.1-flash-preview` → `gemini-omni-1.1-flash`、
+`omni-flash-preview` / `omni-flash-legacy` → `gemini-omni-flash-preview`（旧世代）。
+
+将来の GA / 上位版を見越した**候補モデル**（`gemini-omni-1.1-flash-001`, `gemini-omni-1.1-pro`,
+`gemini-omni-pro-preview` など）も、`GEMINI_VIDEO_MODEL` に指定すればそのまま API に
+送信されます（現時点では未提供の可能性があります）。候補一覧は
 `list_models()` の `candidate_models` で確認できます。
+
+### Omni 1.1 Flash で追加された機能と本 MCP での使い方
+
+| 1.1 の新機能 | 本 MCP での使い方 |
+|-------------|------------------|
+| **シーン延長**（末尾に 3〜10 秒の続きを追加。直前 10 秒を見て生成、合計 40 秒まで） | `extend_video(prompt, previous_interaction_id=...)` または `extend_video(prompt, input_videos=[...])` |
+| **最初と最後のフレーム指定**（2 枚の画像の間をつなぐ） | `generate_video(prompt, first_frame="a.png", last_frame="b.png")` |
+| **360p ドラフト**（720p より速く・安く試作） | `generate_video(..., resolution="360p")` または `GEMINI_VIDEO_RESOLUTION=360p` |
+| **1080p / 4k 仕上げ**（アップスケール。細部が増えるわけではない） | `generate_video(..., resolution="1080p")` / `"4k"`。生成時に指定（後から別工程で高画質化するのではない） |
+| **参照動画**（3 秒以内・最大 3 本の動きを参考にさせる） | `generate_video(prompt, input_videos=[...], task="reference_to_video")` |
+
+> **高解像度の注意**: 本 MCP は動画を base64 インラインで受け取ります。公式では 4MB を超える
+> 出力（1080p / 4k など）は `delivery="uri"`（Files API 経由）が推奨されているため、
+> 高解像度で失敗する場合は 720p 以下で生成してください。
 
 ### 5. 初回認証
 
@@ -104,13 +130,14 @@ Google ログイン画面が表示されます。自分のアカウントでロ�
 |--------|------|
 | `auth_status()` | 認証・プロジェクト・モデルの準備状況を確認する |
 | `reauthorize()` | ブラウザで再ログインしてトークンを取り直す |
-| `list_models()` | 利用可能なモデル・別名・アスペクト比・task 一覧を返す |
-| `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, input_videos?, project_id?)` | テキスト/画像/動画から動画を生成する（`input_videos` 指定で動画→動画） |
+| `list_models()` | 利用可能なモデル・別名・アスペクト比・解像度・task 一覧を返す |
+| `generate_video(prompt, out_path?, model?, aspect_ratio?, resolution?, task?, input_images?, input_videos?, first_frame?, last_frame?, project_id?)` | テキスト/画像/動画から動画を生成する（`input_videos` 指定で動画→動画・参照動画、`first_frame`/`last_frame` でキーフレーム補間） |
 | `edit_video(prompt, previous_interaction_id?, input_videos?, out_path?, ...)` | 動画を編集する。前の生成結果（`previous_interaction_id`）または手持ち動画（`input_videos`）を編集 |
+| `extend_video(prompt, previous_interaction_id?, input_videos?, out_path?, ...)` | 動画の末尾に続きを生成して延長する（1 回 3〜10 秒、合計 40 秒まで） |
 
 ### スキル（ツール）の説明一覧
 
-MCP クライアント（Amazon Quick / Claude Desktop 等）に公開される 5 つのツール（スキル）と、その引数・戻り値の詳細です。
+MCP クライアント（Amazon Quick / Claude Desktop 等）に公開される 6 つのツール（スキル）と、その引数・戻り値の詳細です。
 
 #### `auth_status()`
 認証・プロジェクト・モデルの準備状況を確認する。
@@ -143,25 +170,28 @@ MCP クライアント（Amazon Quick / Claude Desktop 等）に公開される 
   - `default`: 既定モデル
   - `forced_by_env`: 環境変数 `GEMINI_VIDEO_MODEL` によるモデル固定が有効か
   - `aspect_ratios`: 有効なアスペクト比（`16:9` / `9:16`）
+  - `resolutions` / `default_resolution`: 有効な解像度（`360p` / `720p` / `1080p` / `4k`）と既定
   - `tasks`: 有効な task 種別
   - `note`: モデル選択・優先順位の補足
 
-#### `generate_video(prompt, out_path?, model?, aspect_ratio?, task?, input_images?, input_videos?, project_id?)`
-Gemini Omni Flash で動画を生成する。テキストのみ（text_to_video）、参照画像あり（image_to_video / reference_to_video）、動画→動画（edit）に対応。音声付きの MP4 が生成される。
+#### `generate_video(prompt, out_path?, model?, aspect_ratio?, resolution?, task?, input_images?, input_videos?, first_frame?, last_frame?, project_id?)`
+Gemini Omni 1.1 Flash で動画を生成する。テキストのみ（text_to_video）、参照画像あり（image_to_video / reference_to_video）、最初と最後のフレーム指定、参照動画、動画→動画（edit）に対応。音声付きの MP4（最大 10 秒）が生成される。
 
 - **引数**:
   - `prompt`（必須）: 生成したい動画の説明。`input_images` 指定時はその画像をどう使うかの指示。
   - `out_path`: 出力先ファイルパス（.mp4）。省略時は `GEMINI_VIDEO_OUT_DIR` に自動命名で保存。※ Amazon Quick でプレビューするには許可フォルダ内のパスを指定すること。
   - `model`: 使用モデル。別名 `omni-flash` 可。環境変数 `GEMINI_VIDEO_MODEL` 設定時はこの引数は無視。
   - `aspect_ratio`: アスペクト比。`16:9`（既定・横）または `9:16`（縦）。
-  - `task`: 動作の明示指定（任意）。`text_to_video` / `image_to_video` / `reference_to_video` / `edit`。未指定ならモデルがプロンプト・入力から推測。
-  - `input_images`: 参照画像のパス配列（任意）。1枚なら画像→動画、複数なら被写体参照など。高解像度画像＋具体的な動きの指示を推奨。
-  - `input_videos`: 入力動画のパス配列（任意）。動画→動画（編集）に使う。※ 複数動画の同時参照は非対応（通常1本）。
+  - `resolution`: 解像度。`360p`（ドラフト）/ `720p`（既定）/ `1080p` / `4k`（アップスケール）。
+  - `task`: 動作の明示指定（任意）。`text_to_video` / `image_to_video` / `reference_to_video` / `edit` / `extend`。未指定ならモデルがプロンプト・入力から推測。
+  - `input_images`: 参照画像のパス配列（任意・最大 10 枚）。1枚なら画像→動画、複数なら被写体参照など。高解像度画像＋具体的な動きの指示を推奨。
+  - `input_videos`: 入力動画のパス配列（任意）。動画→動画の編集（1本・10 秒以内）、または参照動画（3 秒以内・最大 3 本、`task="reference_to_video"`）。
+  - `first_frame` / `last_frame`: 動画の最初と最後のフレームにする画像パス（任意・両方指定）。2 枚の間をつなぐ動画を生成する。
   - `project_id`: プロジェクトID上書き（任意・クォータ帰属用）。
-- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `model` / `aspect_ratio` / `project_id`
-  - `interaction_id` は `edit_video` の `previous_interaction_id` に渡してステートフル編集できる。
+- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `model` / `aspect_ratio` / `resolution` / `project_id`
+  - `interaction_id` は `edit_video` / `extend_video` の `previous_interaction_id` に渡してステートフル編集・延長できる。
 
-#### `edit_video(prompt, previous_interaction_id?, out_path?, model?, aspect_ratio?, input_images?, input_videos?, project_id?)`
+#### `edit_video(prompt, previous_interaction_id?, out_path?, model?, aspect_ratio?, resolution?, input_images?, input_videos?, project_id?)`
 動画を編集する。編集対象は次の2通りのいずれかで指定する。
 
 1. **ステートフル編集**（前の生成結果を継続編集）: `previous_interaction_id` に `generate_video` / `edit_video` が返した `interaction_id` を渡すと、前の動画を再アップロードせずに編集が適用される。
@@ -175,10 +205,20 @@ Gemini Omni Flash で動画を生成する。テキストのみ（text_to_video�
   - `out_path`: 出力先ファイルパス（.mp4）。省略時は `GEMINI_VIDEO_OUT_DIR` に自動命名で保存。
   - `model`: 使用モデル（任意）。環境変数 `GEMINI_VIDEO_MODEL` 設定時は無視。
   - `aspect_ratio`: アスペクト比（任意・`16:9` / `9:16`）。省略時は前の設定を引き継ぐ。
+  - `resolution`: 解像度（任意・`360p` / `720p` / `1080p` / `4k`）。
   - `input_images`: 追加の参照画像パス配列（任意）。
-  - `input_videos`: 編集対象の入力動画パス配列（任意・動画→動画）。※ 複数動画の同時参照は非対応（通常1本）。
+  - `input_videos`: 編集対象の入力動画パス配列（任意・動画→動画・10 秒以内）。※ 複数動画にまたがる編集は非対応（1本）。
   - `project_id`: プロジェクトID上書き（任意）。
-- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `previous_interaction_id` / `model` / `project_id`
+- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `previous_interaction_id` / `task` / `model` / `project_id`
+
+#### `extend_video(prompt, previous_interaction_id?, out_path?, model?, aspect_ratio?, resolution?, input_videos?, project_id?)`
+動画の末尾に続きを生成して延長する（Omni 1.1 Flash の `extend` task）。1 回の延長で 3〜10 秒、合計 40 秒まで。モデルは直前 10 秒をコンテキストとして見るため、人物・照明が途中で変わりにくい。
+
+- 延長対象は `edit_video` と同様に `previous_interaction_id`（前の生成/編集/延長結果）または `input_videos`（手持ち動画・10 秒以内）で指定。少なくとも一方が必須。
+- 戻り値の `interaction_id` を再度 `previous_interaction_id` に渡せば、さらに延長を重ねられる。
+- ※ EEA/スイス/UK ではアップロード動画の延長は非対応。アップロード動画に台詞を追加する延長も非対応。
+- **引数**: `prompt`（必須・続きの内容）、`previous_interaction_id`、`out_path`、`model`、`aspect_ratio`、`resolution`、`input_videos`、`project_id`
+- **戻り値**: `success` / `videos` / `out_path` / `count` / `interaction_id` / `previous_interaction_id` / `task` / `model` / `project_id`
 
 ### 使い方の例
 
@@ -186,9 +226,13 @@ Gemini Omni Flash で動画を生成する。テキストのみ（text_to_video�
 - **縦動画**: `generate_video(prompt="A futuristic city with neon lights...", aspect_ratio="9:16")`
 - **画像から**: `generate_video(prompt="turn this into realistic footage, using the drawing only as a guide for movement", input_images=["/path/to/fish.jpg"], task="image_to_video")`
 - **被写体参照（複数画像）**: `generate_video(prompt="A cat playfully batting at a ball of yarn.", input_images=["/path/cat.png", "/path/yarn.png"])`
+- **最初と最後のフレーム指定**: `generate_video(prompt="A smooth cinematic transition from a lush green forest at sunrise to a snowy forest under a starry night sky.", first_frame="/path/forest_day.jpg", last_frame="/path/forest_night.jpg")`
+- **参照動画（動きを参考にする）**: `generate_video(prompt="The woman is playing the violin, following the motion in the reference clip.", input_videos=["/path/ref1.mp4"], task="reference_to_video")`（3 秒以内・最大 3 本）
+- **360p ドラフト → 1080p 仕上げ**: `generate_video(prompt=..., resolution="360p")` で試作し、良ければ同じプロンプトで `resolution="1080p"`（または `"4k"`）
 - **動画から動画（手持ち動画の編集）**: `generate_video(prompt="When the person touches the mirror, make the mirror ripple like liquid. Keep everything else the same.", input_videos=["/path/to/source.mp4"], task="edit")`
   - あるいは `edit_video(prompt="この動画をアニメ調にして。他はそのまま", input_videos=["/path/to/source.mp4"])`
 - **ステートフル編集（モデル生成動画の継続編集）**: `generate_video(...)` の戻り値 `interaction_id` を `edit_video(prompt="空を夕焼けに", previous_interaction_id=<id>)` に渡す
+- **シーン延長**: `extend_video(prompt="Continue the scene: the camera slowly pulls back to reveal the whole city.", previous_interaction_id=<id>)`。戻り値の `interaction_id` でさらに延長を重ねられる（合計 40 秒まで）
 
 > **画像→動画のコツ**: 高解像度の画像を使い、カメラの動き・被写体の動き・環境効果など
 > 具体的な動きを指示すると良い結果になります。「動かして」のような曖昧な指示は避けてください。
@@ -197,11 +241,11 @@ Gemini Omni Flash で動画を生成する。テキストのみ（text_to_video�
 > - `input_videos` に編集したい動画を1本渡します（`task="edit"` 推奨）。編集はシンプルなプロンプトが
 >   最も効果的です。特定の要素だけ変えたいときは「他はそのまま（Keep everything else the same）」を
 >   添えると一貫性を保てます（例: 「電話を見えなくして。他はそのまま」）。
-> - **複数動画の同時参照は非対応**です。1本のみ渡してください。
-> - **リージョン制約**: EEA（欧州経済領域）・スイス・英国では**アップロードした動画の編集は非対応**です
->   （`previous_interaction_id` を使ったモデル生成動画の編集は可能）。
-> - 音声リファレンスの入力、動画の延長・フレーム間補間（最初と最後のフレームから中間を生成）、
->   YouTube 動画の入力ソース利用は非対応です。
+> - 編集対象の動画は **1 本・10 秒以内**。複数動画にまたがる編集・推論は非対応です
+>   （参照動画として 3 秒以内のクリップを最大 3 本渡す `reference_to_video` は別機能）。
+> - **リージョン制約**: EEA（欧州経済領域）・スイス・英国では**アップロードした動画の編集・延長は非対応**です
+>   （`previous_interaction_id` を使ったモデル生成動画の編集・延長は可能）。
+> - 音声リファレンスの入力、アップロード動画への台詞追加を伴う延長、YouTube 動画の入力ソース利用は非対応です。
 > - 大きな動画は base64 でそのまま送信するためペイロード上限に達する可能性があります
 >   （公式では 4MB 超は Files API 経由が推奨。現状の本 MCP は base64 直接送信）。
 
@@ -244,8 +288,9 @@ MCP クライアント（Amazon Quick / Claude Desktop 等）の設定ファイ�
         "GEMINI_VIDEO_CLIENT_ID": "xxxxxxxx.apps.googleusercontent.com",
         "GEMINI_VIDEO_CLIENT_SECRET": "GOCSPX-xxxxxxxx",
         "GOOGLE_CLOUD_PROJECT": "your-gcp-project-id",
-        "GEMINI_VIDEO_MODEL": "gemini-omni-flash-preview",
+        "GEMINI_VIDEO_MODEL": "gemini-omni-1.1-flash",
         "GEMINI_VIDEO_ASPECT_RATIO": "16:9",
+        "GEMINI_VIDEO_RESOLUTION": "720p",
         "GEMINI_VIDEO_OUT_DIR": "/Users/tatsuya.naiki/PycharmProjects/gemini-videos"
       }
     }
@@ -269,7 +314,7 @@ MCP クライアント（Amazon Quick / Claude Desktop 等）の設定ファイ�
         "GEMINI_VIDEO_CLIENT_ID": "xxxxxxxx.apps.googleusercontent.com",
         "GEMINI_VIDEO_CLIENT_SECRET": "GOCSPX-xxxxxxxx",
         "GOOGLE_CLOUD_PROJECT": "your-gcp-project-id",
-        "GEMINI_VIDEO_MODEL": "gemini-omni-flash-preview"
+        "GEMINI_VIDEO_MODEL": "gemini-omni-1.1-flash"
       }
     }
   }
@@ -280,8 +325,9 @@ MCP クライアント（Amazon Quick / Claude Desktop 等）の設定ファイ�
 > - `env` に必要なのは最低限 `GEMINI_VIDEO_CLIENT_ID` / `GEMINI_VIDEO_CLIENT_SECRET` /
 >   `GOOGLE_CLOUD_PROJECT`（または `GEMINI_VIDEO_PROJECT_ID`）の3つ。残りは任意（既定値あり）。
 > - `GEMINI_VIDEO_MODEL` を指定すると、そのモデルが**最優先**で使われます（`generate_video` /
->   `edit_video` の `model` 引数より優先）。上の例では既定と同じ `gemini-omni-flash-preview` を
->   明示していますが、別名 `omni-flash` や将来の候補モデルも指定できます。固定したくなければ省略可（既定が使われます）。
+>   `edit_video` / `extend_video` の `model` 引数より優先）。上の例では既定と同じ `gemini-omni-1.1-flash` を
+>   明示していますが、別名 `omni-flash` や旧世代 `gemini-omni-flash-preview`、将来の候補モデルも指定できます。
+>   固定したくなければ省略可（既定が使われます）。
 > - `GEMINI_VIDEO_OUT_DIR` は Amazon Quick の許可フォルダ内（例 `/Users/tatsuya.naiki/PycharmProjects/...`）に
 >   すると、生成した動画をそのままプレビューできます。既定の `~/gemini-videos` は許可フォルダ外のため非推奨。
 > - シークレットを設定ファイルに直書きしたくない場合は、シェルの環境変数として export しておき
@@ -298,10 +344,16 @@ MCP クライアント（Amazon Quick / Claude Desktop 等）の設定ファイ�
 
 ## 注記
 
-Gemini Omni Flash は執筆時点で**プレビュー**です。`interactions` は Gemini Developer API の
+Gemini Omni 1.1 Flash は執筆時点で**プレビュー**です。`interactions` は Gemini Developer API の
 比較的新しいサーフェスで、SDK の便利フィールド `interaction.output_video` は SDK 専用のため、
 本 MCP は REST の `steps` 配列（`model_output` の `content` 内 `type=video`）から動画を取り出します。
 API の仕様変更に追従できるよう、レスポンス抽出（`api.extract_videos`）は防御的に実装しています。
+
+本 MCP は **MCP Python SDK 2.x**（`mcp>=2,<3`）を使用しています。2.x では `FastMCP` が
+`mcp.server.mcpserver.MCPServer` に改名され、ツール内で投げる想定内の失敗は `ToolError` でないと
+クライアントに「Error executing tool」だけが返る（メッセージが隠れる）ため、本 MCP では
+入力不備・API エラー・認証エラーを `ToolError` に変換して返しています。SDK 1.x では動作しません
+（1.x 系で使う場合は v0.1.0 タグを参照）。
 
 ## ライセンス
 

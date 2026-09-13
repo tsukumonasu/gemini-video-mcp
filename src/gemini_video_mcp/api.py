@@ -1,19 +1,26 @@
 """
-Gemini Omni Flash 動画生成 API クライアント（interactions エンドポイント）。
+Gemini Omni 1.1 Flash 動画生成 API クライアント（interactions エンドポイント）。
 
 認証は auth.py の OAuth access token を使用（Authorization: Bearer）。
 出所: https://ai.google.dev/gemini-api/docs/omni
 
 リクエスト形式（interactions）:
   {
-    "model": "gemini-omni-flash-preview",
+    "model": "gemini-omni-1.1-flash",
     "input": "テキスト" もしくは
              [{"type":"image","data":"<base64>","mime_type":"image/jpeg"},
               {"type":"text","text":"..."}],
-    "response_format": {"type": "video", "aspect_ratio": "16:9"},   # 任意
+    "response_format": {                       # 任意
+      "type": "video",
+      "aspect_ratio": "16:9",                  # 16:9 / 9:16
+      "resolution": "720p",                    # 360p / 720p / 1080p / 4k
+      "delivery": "base64"                     # base64（既定）/ uri（Files API 経由）
+    },
     "generation_config": {"video_config": {"task": "image_to_video"}},  # 任意
-    "previous_interaction_id": "v1_..."   # ステートフル編集時（任意）
+    "previous_interaction_id": "v1_..."   # ステートフル編集・延長時（任意）
   }
+  ※ 本 MCP は delivery=base64（既定）のみ使用。1080p / 4k など 4MB 超の動画は
+    公式では delivery="uri" が推奨されるため、大きい出力で失敗する場合は解像度を下げる。
 
 レスポンス（未加工 REST）:
   {
@@ -25,7 +32,7 @@ Gemini Omni Flash 動画生成 API クライアント（interactions エンド�
     ],
     "id": "v1_...",
     "status": "completed",
-    "model": "gemini-omni-flash-preview",
+    "model": "gemini-omni-1.1-flash",
     "object": "interaction"
   }
   ※ SDK 専用の便利フィールド interaction.output_video は REST には無いため、
@@ -75,7 +82,7 @@ def video_to_input_part(video_path: str) -> dict[str, Any]:
     """入力動画を interactions の input パート（video）に変換する。
 
     出所のスキーマ: {"type": "video", "data": "<base64>", "mime_type": "video/mp4"}
-    ※ 動画→動画（編集）用。大きな動画は base64 だとペイロード上限に達する可能性が
+    ※ 動画→動画（編集・延長）および参照動画用。大きな動画は base64 だとペイロード上限に達する可能性が
       あるため、公式では Files API 経由が推奨されるが、本 MCP は httpx のみ依存で
       シンプルに保つため base64 直接埋め込みで送る。
     """
@@ -98,8 +105,10 @@ def build_input(
     - 画像・動画が無ければ文字列（テキストのみ）を返す。
     - 画像/動画があれば [video..., image..., {"type":"text","text":prompt}] の
       パート配列を返す。
-        * 画像 → 画像→動画・被写体参照（複数画像も可）
-        * 動画 → 動画→動画（編集）。※ 複数動画の同時参照は非対応のため通常は1本
+        * 画像 → 画像→動画・被写体参照（最大 10 枚）。2 枚を「最初のフレーム, 最後のフレーム」
+          の順に並べるとキーフレーム補間（first/last frame）になる（順序を保持する）。
+        * 動画 → 動画→動画（編集・延長: 1 本・10 秒以内）、または参照動画
+          （reference_to_video: 3 秒以内・最大 3 本）。※ 複数動画にまたがる推論は非対応
     """
     if not input_images and not input_videos:
         return prompt
@@ -117,6 +126,7 @@ def _build_request_body(
     input_value: Any,
     *,
     aspect_ratio: Optional[str],
+    resolution: Optional[str],
     task: Optional[str],
     previous_interaction_id: Optional[str],
 ) -> dict[str, Any]:
@@ -125,8 +135,13 @@ def _build_request_body(
         "model": model,
         "input": input_value,
     }
+    response_format: dict[str, Any] = {}
     if aspect_ratio:
-        body["response_format"] = {"type": "video", "aspect_ratio": aspect_ratio}
+        response_format["aspect_ratio"] = aspect_ratio
+    if resolution:
+        response_format["resolution"] = resolution
+    if response_format:
+        body["response_format"] = {"type": "video", **response_format}
     if task:
         body["generation_config"] = {"video_config": {"task": task}}
     if previous_interaction_id:
@@ -140,17 +155,19 @@ async def create_interaction(
     input_value: Any,
     *,
     aspect_ratio: Optional[str] = None,
+    resolution: Optional[str] = None,
     task: Optional[str] = None,
     previous_interaction_id: Optional[str] = None,
     project_id: Optional[str] = None,
     timeout: float = 600.0,
 ) -> dict[str, Any]:
-    """Gemini Omni Flash で動画を生成する（interactions を叩く）。"""
+    """Gemini Omni 1.1 Flash で動画を生成する（interactions を叩く）。"""
     url = build_interactions_url()
     body = _build_request_body(
         model,
         input_value,
         aspect_ratio=aspect_ratio,
+        resolution=resolution,
         task=task,
         previous_interaction_id=previous_interaction_id,
     )
